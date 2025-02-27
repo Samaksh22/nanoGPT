@@ -7,8 +7,8 @@ from torch.nn import functional as F
 batch_size = 64  # count of block processed parallely
 block_size = 256  # size of each block
 max_iters = 5000
-eval_interval = 50
-learning_rate = 3e-4
+eval_interval = 100
+learning_rate = 1e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
 n_embd = 384
@@ -152,12 +152,14 @@ class Block(nn.Module):
 
         super().__init__()
         head_size = n_embd // n_head
+        self.ln1 = nn.LayerNorm(n_embd)
         self.sa = MultiHeadAttention(n_head, head_size)
+        self.ln2 = nn.LayerNorm(n_embd)
         self.ffwd = FeedForward(n_embd)
-        self.lnl = LayerNorm(n_embd)
+    
     def forward(self, x):
-        x = x + self.sa(x)
-        x = x + self.ffwd(x)
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
         return x
         
 # Modified bigram model
@@ -227,12 +229,12 @@ model = model.to(device)
 
 
 # creating a pytorch optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # batch_size = 32
 for iter in range(max_iters):
-
-    # print(f"step {iter}")
+    # if iter % 10 == 0:
+    #     print(f"step {iter}")
     if iter % eval_interval == 0:
         losses = estimate_loss()
         print(f"step {iter}: train loss {losses['train']:.4f}, val_loss {losses['val']:.4f}")
