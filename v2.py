@@ -127,7 +127,7 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-
+# defined but not used
 class LayerNorm:
     def __init__(self, dim, eps=1e-5, momentum=0.1):
         self.eps = eps
