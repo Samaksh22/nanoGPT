@@ -6,7 +6,7 @@ from torch.nn import functional as F
 # hyperparameters
 batch_size = 64  # count of block processed parallely
 block_size = 256  # size of each block
-max_iters = 5000
+max_iters = 3000
 eval_interval = 100
 learning_rate = 1e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -15,6 +15,7 @@ n_embd = 384
 n_head = 6
 n_layer = 6
 dropout = 0.2
+output_length = 5000
 # ---------------
 
 torch.manual_seed(1337)
@@ -76,6 +77,7 @@ class Head(nn.Module):
 
     def __init__(self, head_size):
         super().__init__()
+        self.head_size = head_size
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
@@ -87,11 +89,11 @@ class Head(nn.Module):
         B, T, C = x.shape
         k = self.key(x)
         q = self.query(x)
-        
+
         # compute attention scores ("affenities")
-        wei = q @ k.transpose(-2, -1) * C**-0.5
+        wei = q @ k.transpose(-2, -1) * (self.head_size**-0.5)
         wei = wei.masked_fill(self.tril[:T, :T]==0, float('-inf'))
-        wei = F.softmax(wei, dim=1)
+        wei = F.softmax(wei, dim=-1)
         wei = self.dropout(wei)
         # perform the weighted aggregation of the values
         v = self.value(x)
@@ -105,15 +107,15 @@ class MultiHeadAttention(nn.Module):
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embd, n_embd)
         self.dropout = nn.Dropout(dropout)
-        
+
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         out = self.proj(out)
         return out
-    
-    
+
+
 class FeedForward(nn.Module):
-    """ simple linear layer followed by non-linear layer """ 
+    """ simple linear layer followed by non-linear layer """
 
     def __init__(self, n_embd):
         super().__init__()
@@ -123,30 +125,30 @@ class FeedForward(nn.Module):
             nn.Linear(4*n_embd, n_embd),
             nn.Dropout(dropout),
         )
-        
+
     def forward(self, x):
         return self.net(x)
 
-# defined but not used
+
 class LayerNorm:
     def __init__(self, dim, eps=1e-5, momentum=0.1):
         self.eps = eps
         self.gamma = torch.ones(dim)
         self.beta = torch.zeros(dim)
-    
+
     def __call__(self, x):
         # calculate forward pass
         xmean = x.mean(1, keepdim=True)
         xvar = x.var(1, keepdim=True)
         xhat = (x - xmean) / torch.sqrt(xvar + self.beta)
         self.out = self.gamma * xhat + self.beta
-    
+
     def parameters(self):
         return [self.gamma, self.alpha]
-  
+
 class Block(nn.Module):
     """ transformer block: communication followed by computation """
-    
+
     def __init__(self, n_embd, n_head):
         # n_embd: embedding dimensions, n_head: number of heads
 
@@ -156,43 +158,43 @@ class Block(nn.Module):
         self.sa = MultiHeadAttention(n_head, head_size)
         self.ln2 = nn.LayerNorm(n_embd)
         self.ffwd = FeedForward(n_embd)
-    
+
     def forward(self, x):
         x = x + self.sa(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
         return x
-        
+
 # Modified bigram model
 class LanguageModel(nn.Module):
     def __init__(self):
         super().__init__()
-        
+
         # each token directly reads off the logits for the next token from the lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])       
-       
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+
         # self.sa_head = Head(n_embd)
         ## no need after introduction of blocks
         # self.sa_heads = MultiHeadAttention(4, n_embd//4) # i.e. 4 heads of 8-dimensional self-attention
         # self.ffwd = FeedForward(n_embd)
-        
+
         self.ln_f = nn.LayerNorm(n_embd) # final layer norm
         self.lm_head = nn.Linear(n_embd, vocab_size) # linear layer
 
     def forward(self, idx, targets=None):
-        
-        
+
+
         # idx and targets are both (B, T) tensors of integers
         B, T = idx.shape
-        
+
         tok_embd = self.token_embedding_table(idx) # (B, T, C) batch by time by channel
         pos_embd = self.position_embedding_table(torch.arange(T, device=device)) # (T, C)
         x = tok_embd + pos_embd  # (B, T, C)
         x = self.blocks(x)
         x = self.ln_f(x)
         logits = self.lm_head(x) # (B, T, vocab_size)
-        
+
         if targets is None:
             loss = None
         else:
@@ -213,12 +215,12 @@ class LanguageModel(nn.Module):
             logits, loss = self(idx_cond)
             # focus only on the last timestep
             logits = logits[:, -1, :] # becomes (B, C)
-            
+
             # apply softmax to get probabilities
             probs = F.softmax(logits, dim=-1) # (B, C)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            
+
             # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
@@ -237,8 +239,8 @@ for iter in range(max_iters):
     #     print(f"step {iter}")
     if iter % eval_interval == 0:
         losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val_loss {losses['val']:.4f}")
-    
+        print(f"step {iter:4}: train loss {losses['train']:.4f}, val_loss {losses['val']:.4f}")
+
     # sample a batch of data
     xb, yb = get_batch('train')
 
@@ -252,5 +254,6 @@ for iter in range(max_iters):
 
 # generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print("Output:\n", decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+with open("output.txt", "w") as f:
+    print("Output:\n", decode(model.generate(context, max_new_tokens=output_length)[0].tolist()))
 
