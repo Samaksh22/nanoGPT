@@ -7,7 +7,7 @@ I have just copied the text from karpathy's repo.
 
 
 ## Bigram
-- Followed Karpathy's video and built a Bigram model.
+- Followed Karpathy's [video](https://youtu.be/kCc8FmEb1nY?si=No-Zb7dChfY3F2OZ) and built a Bigram model.
 - From my understanding, it is a very simple model. 
 - The model just reads one token at a time and uses a probablity table (embedding table) to generate the next token.
 - This uses `multinomial` function on the current token's channels.
